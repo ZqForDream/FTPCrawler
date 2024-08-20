@@ -154,10 +154,10 @@ class FTPCrawler:
         self.__save_dirname = save_dirname
         self.__replace_suffixes = replace_suffixes
 
-        if (start_date != '' and len(start_date) != 8) or (end_date != '' and len(end_date) != 8):
+        if (len(self.__start_date) != 8) or (len(self.__end_date) != 8):
             log.error('错误：请输入8位数字格式日期，例如：20230101')
             exit(-1)
-        if datetime.strptime(start_date, "%Y%m%d") > datetime.strptime(end_date, "%Y%m%d"):
+        if datetime.strptime(self.__start_date, "%Y%m%d") > datetime.strptime(self.__end_date, "%Y%m%d"):
             log.error('错误：开始日期大于结束日期')
             exit(-1)
 
@@ -272,6 +272,10 @@ class FTPCrawler:
         for file in files_list:
             filename = file[8]
             for prefix in self.__prefixes:
+                if prefix == 'SULP' and self.__replace_suffixes.get('nav_suffix'):
+                    self.__replace_suffixes['nav_suffix'] = '_30S_MN.rnx'
+                elif prefix != 'SULP' and self.__replace_suffixes.get('nav_suffix'):
+                    self.__replace_suffixes['nav_suffix'] = '_MN.rnx'
                 if filename.startswith(prefix):
                     if filename.endswith(self.__replace_suffixes.get('obs_suffix') + '.gz'):
                         new_folder_name = filename.replace(self.__replace_suffixes.get('obs_suffix') + '.gz', '')
@@ -316,6 +320,10 @@ class FTPCrawler:
             dirname = os.path.join(self.__save_dirname, prefix)
             for son_dir in os.listdir(dirname):
                 for file in os.listdir(os.path.join(dirname, son_dir)):
+                    if prefix == 'SULP' and self.__replace_suffixes.get('nav_suffix'):
+                        self.__replace_suffixes['nav_suffix'] = '_30S_MN.rnx'
+                    elif prefix != 'SULP' and self.__replace_suffixes.get('nav_suffix'):
+                        self.__replace_suffixes['nav_suffix'] = '_MN.rnx'
                     if file.endswith(self.__replace_suffixes.get('obs_suffix')) and file.replace(
                             self.__replace_suffixes.get('obs_suffix'), self.__replace_suffixes.get('nav_suffix')) in os.listdir(os.path.join(dirname, son_dir)):
                         if file in file_lst:
