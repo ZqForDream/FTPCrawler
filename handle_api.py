@@ -108,7 +108,7 @@ def date_analysis(date_string: str):
     date_obj = datetime.strptime(date_string, '%Y%m%d')
 
     # 获取当年的开始日期
-    current_year = datetime.now().year
+    current_year = date_obj.year
     start_of_year = datetime(current_year, 1, 1)
 
     # 计算日期在当年的天数
@@ -168,6 +168,25 @@ class FTPCrawler:
         self.__start_year, self.__start_day = date_analysis(self.__start_date)
         self.__end_year, self.__end_day = date_analysis(self.__end_date)
         self.__current_year, self.__current_day = date_analysis(datetime.now().strftime('%Y%m%d'))
+        self.__datetime_list = []
+        if self.__start_year == self.__end_year:
+            for day in range(self.__start_day, self.__end_day + 1):
+                self.__datetime_list.append((self.__start_year, day))
+        elif self.__start_year < self.__end_year:
+            for year in range(self.__start_year, self.__end_year + 1):
+                max_day = date_analysis(f'{year}1231')[1]
+                if year == self.__start_year:
+                    for day in range(self.__start_day, max_day + 1):
+                        self.__datetime_list.append((year, day))
+                elif year == self.__end_year:
+                    for day in range(1, self.__end_day + 1):
+                        self.__datetime_list.append((year, day))
+                else:
+                    for day in range(1, max_day + 1):
+                        self.__datetime_list.append((year, day))
+        else:
+            log.error('开始日期不能大于结束日期')
+            raise Exception('开始日期不能大于结束日期')
         # 创建日期缓存文件
         if not os.path.exists('.cache'):
             os.mkdir('.cache')
@@ -201,8 +220,8 @@ class FTPCrawler:
         except ftplib.all_errors as e:
             log.error(f'登录FTP失败: {e}')
             raise Exception(f'登录FTP失败: {e}')
-        for year in range(self.__start_year, self.__end_year + 1):
-            for day in range(self.__start_day, self.__end_day + 1):
+        for date in self.__datetime_list:
+            for year, day in date:
                 for attach_fixed_path in self.__attach_fixed_paths:
                     if not self.__download_process(year, day, attach_fixed_path, decompress, fixed_download_count):
                         self.__ftp.quit()
@@ -211,9 +230,8 @@ class FTPCrawler:
         log.info('关闭FTP连接')
 
     def parse_process(self):
-        for year in range(self.__start_year, self.__end_year + 1):
-            for day in range(self.__start_day, self.__end_day + 1):
-                self.__data_parsing()
+        for _ in self.__datetime_list:
+            self.__data_parsing()
 
     def __download_process(self, year: int, day: int, attach_fixed_path: str, decompress: bool, fixed_download_count: int) -> bool:
         if attach_fixed_path == '':
