@@ -45,7 +45,7 @@ def rtkpost(obs_file: str, nav_file: str, pos_file: str):
     except ProcessNotFoundError:
         app = application.Application(backend='uia').start(rtkpost_path, work_dir=os.path.dirname(rtkpost_path))
     main_window = app.window(class_name='TMainForm')
-    main_window.wait('ready')
+    main_window.wait('ready', timeout=120, retry_interval=5)
     # print(main_window.print_control_identifiers())
     panel = main_window.child_window(class_name="TPanel", found_index=2).child_window(class_name="TPanel", found_index=1)
     rinex_obs_edit = panel.child_window(class_name="TComboBox", found_index=5).child_window(class_name="Edit")
@@ -56,7 +56,7 @@ def rtkpost(obs_file: str, nav_file: str, pos_file: str):
     execute_button.click()
     if os.path.exists(pos_file):
         app.window(class_name='TConfDialog').child_window(title="Overwrite", class_name="TButton").click()
-    execute_button.wait('exists', timeout=60)
+    execute_button.wait('exists', timeout=120, retry_interval=5)
 
 
 def rtkplot(pos_file: str, obs_file: str, nav_file: str, obs_suffix: str):
@@ -90,17 +90,17 @@ def rtkplot(pos_file: str, obs_file: str, nav_file: str, obs_suffix: str):
 
 def __rtkplot_file_dlg__(app: Application, menu_option: str, file_dlg_title: str, filepath: str, option: str):
     main_window = app.window(class_name='TPlot')
-    main_window.wait('ready')
+    main_window.wait('ready', timeout=120, retry_interval=5)
     menu_item = main_window.child_window(title='应用程序', control_type="MenuBar").child_window(title="File", control_type="MenuItem")
     main_window.menu_select(menu_option)
     file_dlg = app.window(title=file_dlg_title)
-    file_dlg.wait('ready')
+    file_dlg.wait('ready', timeout=120, retry_interval=5)
     file_dlg.child_window(class_name="Edit").type_keys(filepath)
     send_keys('{ENTER}')
     if os.path.exists(filepath) and filepath.endswith('.txt') and option == 'save':
         file_dlg.child_window(title='确认另存为').child_window(title="是(Y)", control_type="Button").click()
         log.info(f'保存[{filepath}]')
-    menu_item.wait('enabled')
+    menu_item.wait('enabled', timeout=120, retry_interval=5)
 
 
 def date_analysis(date_string: str):
@@ -142,7 +142,7 @@ class FTPCrawler:
                  prefixes: List[str] = None, save_dirname='default', replace_suffixes: dict = None):
         if replace_suffixes is None:
             log.error('错误：请指定参数[replace_suffixes]')
-            exit(-1)
+            return
         self.__host = host
         self.__path = path
         self.__attach_fixed_paths = attach_fixed_paths if attach_fixed_paths is not None else ['']
@@ -156,14 +156,12 @@ class FTPCrawler:
 
         if (len(self.__start_date) != 8) or (len(self.__end_date) != 8):
             log.error('错误：请输入8位数字格式日期，例如：20230101')
-            exit(-1)
+            return
         if datetime.strptime(self.__start_date, "%Y%m%d") > datetime.strptime(self.__end_date, "%Y%m%d"):
             log.error('错误：开始日期大于结束日期')
-            exit(-1)
+            return
 
-        # 登录
-        self.__ftp = ftplib.FTP(host)
-        self.__login()
+        self.__ftp = None
 
         log.info(f'下载日期范围：[{self.__start_date}-{self.__end_date}]')
         # 解析日期
@@ -174,13 +172,6 @@ class FTPCrawler:
         if not os.path.exists('.cache'):
             os.mkdir('.cache')
 
-    def __login(self):
-        try:
-            self.__ftp.login(self.__username, self.__password)
-            log.info(f'登录FTP成功：[{self.__host}]')
-        except ftplib.all_errors as e:
-            log.error(f'登录FTP失败: {e}')
-
     def __get_files_list(self):
         files = []
         try:
@@ -188,7 +179,7 @@ class FTPCrawler:
         except EOFError:
             log.error('获取文件列表 [失败]')
             log.error('错误：FTP连接异常中断！！！')
-            exit(-1)
+            raise Exception('获取文件列表 [失败]')
         return files
 
     def __make_download_dir(self, dst_folder_name: str):
@@ -197,26 +188,34 @@ class FTPCrawler:
             if not os.path.exists(download_dir):
                 os.makedirs(download_dir)
 
-    def process(self, decompress=True, fixed_download_count=6):
+    def download_process(self, decompress=True, fixed_download_count=6):
         """
 
         @param decompress: 对下载的数据文件是否进行解压
         @param fixed_download_count: 当下载的某一日期没有匹配到任何数据文件时，最多下载此次数，直至有匹配的数据文件
         """
+        try:
+            self.__ftp = ftplib.FTP(self.__host)
+            self.__ftp.login(self.__username, self.__password)
+            log.info(f'登录FTP成功：[{self.__host}]')
+        except ftplib.all_errors as e:
+            log.error(f'登录FTP失败: {e}')
+            raise Exception(f'登录FTP失败: {e}')
         for year in range(self.__start_year, self.__end_year + 1):
             for day in range(self.__start_day, self.__end_day + 1):
                 for attach_fixed_path in self.__attach_fixed_paths:
-                    if not self.__process(year, day, attach_fixed_path, decompress, fixed_download_count):
+                    if not self.__download_process(year, day, attach_fixed_path, decompress, fixed_download_count):
+                        self.__ftp.quit()
                         return
-                # 解析数据
-                self.__data_parsing()
-        try:
-            self.__ftp.quit()
-        except (EOFError, ftplib.error_reply, ftplib.error_perm, ftplib.error_temp, ftplib.error_proto):
-            pass
+        self.__ftp.quit()
         log.info('关闭FTP连接')
 
-    def __process(self, year: int, day: int, attach_fixed_path: str, decompress: bool, fixed_download_count: int) -> bool:
+    def parse_process(self):
+        for year in range(self.__start_year, self.__end_year + 1):
+            for day in range(self.__start_day, self.__end_day + 1):
+                self.__data_parsing()
+
+    def __download_process(self, year: int, day: int, attach_fixed_path: str, decompress: bool, fixed_download_count: int) -> bool:
         if attach_fixed_path == '':
             cache_filename = f'.cache/download-{self.__host}'
         else:
@@ -251,10 +250,10 @@ class FTPCrawler:
         except EOFError:
             log.error(f'切换到文件夹: {file_path} [失败]')
             log.error('错误：FTP连接异常中断！！！')
-            exit(-1)
+            raise Exception('FTP连接异常中断！！！')
         except (ftplib.error_reply, ftplib.error_perm, ftplib.error_temp, ftplib.error_proto) as e:
             log.error(f'错误：{e}')
-            exit(-1)
+            raise Exception(f'错误：{e}')
 
         # 获取文件夹中的文件列表
         files_list = self.__get_files_list()
