@@ -220,23 +220,23 @@ class FTPCrawler:
         except ftplib.all_errors as e:
             log.error(f'登录FTP失败: {e}')
             raise Exception(f'登录FTP失败: {e}')
-        for date in self.__datetime_list:
-            for year, day in date:
-                for attach_fixed_path in self.__attach_fixed_paths:
-                    if not self.__download_process(year, day, attach_fixed_path, decompress, fixed_download_count):
-                        self.__ftp.quit()
-                        return
+        for year, day in self.__datetime_list:
+            for attach_fixed_path in self.__attach_fixed_paths:
+                if not self.__download_process(year, day, attach_fixed_path, decompress, fixed_download_count):
+                    self.__ftp.quit()
+                    return
         self.__ftp.quit()
         log.info('关闭FTP连接')
 
     def parse_process(self):
-        for _ in self.__datetime_list:
-            self.__data_parsing()
+        for year, day in self.__datetime_list:
+            self.__data_parsing(get_date(year, day))
 
     def __download_process(self, year: int, day: int, attach_fixed_path: str, decompress: bool, fixed_download_count: int) -> bool:
         if attach_fixed_path == '':
             cache_filename = f'.cache/download-{self.__host}'
         else:
+            attach_fixed_path = str(year)[2:] + attach_fixed_path
             cache_filename = f'.cache/download-{self.__host}[{attach_fixed_path}]'
         if not os.path.exists(cache_filename):
             with open(cache_filename, 'w'):
@@ -289,10 +289,7 @@ class FTPCrawler:
         for file in files_list:
             filename = file[8]
             for prefix in self.__prefixes:
-                if prefix == 'SULP' and self.__replace_suffixes.get('nav_suffix'):
-                    self.__replace_suffixes['nav_suffix'] = '_30S_MN.rnx'
-                elif prefix != 'SULP' and self.__replace_suffixes.get('nav_suffix'):
-                    self.__replace_suffixes['nav_suffix'] = '_MN.rnx'
+                self.__suffixes_special_handle(prefix, download_date)
                 if filename.startswith(prefix):
                     if filename.endswith(self.__replace_suffixes.get('obs_suffix') + '.gz'):
                         new_folder_name = filename.replace(self.__replace_suffixes.get('obs_suffix') + '.gz', '')
@@ -326,7 +323,17 @@ class FTPCrawler:
         update_file_data(cache_filename, date)
         log.info(f'[{cache_filename}]更新缓存日期：{date}')
 
-    def __data_parsing(self):
+    def __suffixes_special_handle(self, prefix: str, download_date: str):
+        if self.__host == 'gnss.bev.gv.at' and prefix == 'SULP' and self.__replace_suffixes.get('nav_suffix'):
+            self.__replace_suffixes['nav_suffix'] = '_30S_MN.rnx'
+        elif self.__host == 'gnss.bev.gv.at' and prefix != 'SULP' and self.__replace_suffixes.get('nav_suffix'):
+            self.__replace_suffixes['nav_suffix'] = '_MN.rnx'
+        elif self.__host == 'igs.gnsswhu.cn' and self.__replace_suffixes.get('obs_suffix') and len(self.__replace_suffixes['obs_suffix']) == 2:
+            self.__replace_suffixes['obs_suffix'] = self.__replace_suffixes['obs_suffix'].replace('.', '.' + download_date[2:4])
+        elif self.__host == 'igs.gnsswhu.cn' and self.__replace_suffixes.get('nav_suffix') and len(self.__replace_suffixes['nav_suffix']) == 2:
+            self.__replace_suffixes['nav_suffix'] = self.__replace_suffixes['nav_suffix'].replace('.', '.' + download_date[2:4])
+
+    def __data_parsing(self, download_date: str):
         # 解析数据
         cache_filename = f'.cache/parsing-{self.__host}'
         if not os.path.exists(cache_filename):
@@ -337,10 +344,7 @@ class FTPCrawler:
             dirname = os.path.join(self.__save_dirname, prefix)
             for son_dir in os.listdir(dirname):
                 for file in os.listdir(os.path.join(dirname, son_dir)):
-                    if prefix == 'SULP' and self.__replace_suffixes.get('nav_suffix'):
-                        self.__replace_suffixes['nav_suffix'] = '_30S_MN.rnx'
-                    elif prefix != 'SULP' and self.__replace_suffixes.get('nav_suffix'):
-                        self.__replace_suffixes['nav_suffix'] = '_MN.rnx'
+                    self.__suffixes_special_handle(prefix, download_date)
                     if file.endswith(self.__replace_suffixes.get('obs_suffix')) and file.replace(
                             self.__replace_suffixes.get('obs_suffix'), self.__replace_suffixes.get('nav_suffix')) in os.listdir(os.path.join(dirname, son_dir)):
                         if file in file_lst:
