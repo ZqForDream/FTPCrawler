@@ -297,6 +297,8 @@ class FTPCrawler:
                         new_folder_name = filename.replace(self.__replace_suffixes.get('nav_suffix') + '.gz', '')
                     else:
                         return
+                    if self.__host == 'igs.gnsswhu.cn':
+                        new_folder_name = filename[:-4].replace('.', '_')
                     new_dirname = os.path.join(self.__save_dirname, prefix, new_folder_name)
                     if not os.path.exists(new_dirname):
                         os.makedirs(new_dirname)
