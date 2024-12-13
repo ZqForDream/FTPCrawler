@@ -10,6 +10,7 @@
 import ftplib
 import gzip
 import os
+import re
 from datetime import datetime, timedelta
 from typing import List
 
@@ -23,6 +24,7 @@ log = MyLog()
 current_dir = os.path.dirname(os.path.abspath(__file__))
 rtkpost_path = 'tools/rtkpost.exe'
 rtkplot_path = 'tools/rtkplot.exe'
+crx2rnx_path = 'tools/crx2rnx.exe'
 
 
 def unzip(filepath: str):
@@ -139,7 +141,7 @@ def update_file_data(filename: str, data: str):
 
 class FTPCrawler:
     def __init__(self, host='localhost', path='/', attach_fixed_paths: List[str] = None, username='anonymous', password='anonymous', start_date='', end_date='',
-                 prefixes: List[str] = None, save_dirname='default', replace_suffixes: dict = None):
+                 mode='prefixes', prefixes: List[str] = None, suffixes: List[str] = None, save_dirname='default', replace_suffixes: dict = None):
         if replace_suffixes is None:
             log.error('错误：请指定参数[replace_suffixes]')
             return
@@ -150,7 +152,9 @@ class FTPCrawler:
         self.__password = password
         self.__start_date = start_date if start_date != '' else datetime.now().strftime('%Y%m%d')
         self.__end_date = end_date if end_date != '' else datetime.now().strftime('%Y%m%d')
+        self.__mode = mode
         self.__prefixes = prefixes if prefixes is not None else ['']
+        self.__suffixes = suffixes if suffixes is not None else ['']
         self.__save_dirname = save_dirname
         self.__replace_suffixes = replace_suffixes
 
@@ -207,7 +211,7 @@ class FTPCrawler:
             if not os.path.exists(download_dir):
                 os.makedirs(download_dir)
 
-    def download_process(self, decompress=True, fixed_download_count=6):
+    def download_process(self, decompress=True, fixed_download_count=6) -> bool:
         """
 
         @param decompress: 对下载的数据文件是否进行解压
@@ -224,9 +228,10 @@ class FTPCrawler:
             for attach_fixed_path in self.__attach_fixed_paths:
                 if not self.__download_process(year, day, attach_fixed_path, decompress, fixed_download_count):
                     self.__ftp.quit()
-                    return
+                    return False
         self.__ftp.quit()
         log.info('关闭FTP连接')
+        return True
 
     def parse_process(self):
         for year, day in self.__datetime_list:
@@ -288,34 +293,69 @@ class FTPCrawler:
         count = 0
         for file in files_list:
             filename = file[8]
-            for prefix in self.__prefixes:
-                self.__suffixes_special_handle(prefix, download_date)
-                if filename.startswith(prefix):
-                    if filename.endswith(self.__replace_suffixes.get('obs_suffix') + '.gz'):
-                        new_folder_name = filename.replace(self.__replace_suffixes.get('obs_suffix') + '.gz', '')
-                    elif filename.endswith(self.__replace_suffixes.get('nav_suffix') + '.gz'):
-                        new_folder_name = filename.replace(self.__replace_suffixes.get('nav_suffix') + '.gz', '')
-                    else:
-                        return
-                    if self.__host == 'igs.gnsswhu.cn':
-                        new_folder_name = filename[:-4].replace('.', '_')
-                    new_dirname = os.path.join(self.__save_dirname, prefix, new_folder_name)
-                    if not os.path.exists(new_dirname):
-                        os.makedirs(new_dirname)
-                    filepath = os.path.join(new_dirname, filename)
-                    with open(filepath, 'wb') as f:
-                        try:
-                            self.__ftp.retrbinary(f'RETR {filename}', f.write)
-                        except EOFError:
-                            log.error(f'下载文件: {filepath} [失败]')
-                            log.error('错误：FTP连接异常中断！！！')
-                            exit(-1)
-                    log.info(f'下载文件: {filepath} [成功]')
-                    # 解压
-                    if decompress:
-                        unzip(filepath)
-                    count += 1
-                    break
+            if self.__mode == 'prefixes':
+                for prefix in self.__prefixes:
+                    self.__suffixes_special_handle(prefix, download_date)
+                    if filename.startswith(prefix):
+                        if filename.endswith(self.__replace_suffixes.get('obs_suffix') + '.gz'):
+                            new_folder_name = filename.replace(self.__replace_suffixes.get('obs_suffix') + '.gz', '')
+                        elif filename.endswith(self.__replace_suffixes.get('nav_suffix') + '.gz'):
+                            new_folder_name = filename.replace(self.__replace_suffixes.get('nav_suffix') + '.gz', '')
+                        else:
+                            return
+                        if self.__host == 'igs.gnsswhu.cn':
+                            new_folder_name = filename[:-4].replace('.', '_')
+                        new_dirname = os.path.join(self.__save_dirname, prefix, new_folder_name)
+                        if not os.path.exists(new_dirname):
+                            os.makedirs(new_dirname)
+                        filepath = os.path.join(new_dirname, filename)
+                        with open(filepath, 'wb') as f:
+                            try:
+                                self.__ftp.retrbinary(f'RETR {filename}', f.write)
+                            except EOFError:
+                                log.error(f'下载文件: {filepath} [失败]')
+                                log.error('错误：FTP连接异常中断！！！')
+                                exit(-1)
+                        log.info(f'下载文件: {filepath} [成功]')
+                        # 解压
+                        if decompress:
+                            unzip(filepath)
+                        count += 1
+                        break
+            elif self.__mode == 'suffixes':
+                _cache_filename = f'.cache/download-suffixes-{self.__host}'
+                if not os.path.exists(_cache_filename):
+                    with open(_cache_filename, 'w'):
+                        log.info(f'创建下载日期缓存文件：[{_cache_filename}]')
+                file_lst = get_file_data(_cache_filename)
+                for suffix in self.__suffixes:
+                    if filename.endswith(suffix) and filename not in file_lst:
+                        matches = re.findall(r'_(\d+)_', filename)
+                        if len(matches) > 0 and len(matches[0]) >= 7:
+                            year = matches[0][:4]
+                            day = matches[0][4:7]
+                        else:
+                            return
+                        new_dirname = os.path.join(self.__save_dirname, year, day)
+                        if not os.path.exists(new_dirname):
+                            os.makedirs(new_dirname)
+                        filepath = os.path.join(new_dirname, filename)
+                        with open(filepath, 'wb') as f:
+                            try:
+                                self.__ftp.retrbinary(f'RETR {filename}', f.write)
+                            except EOFError:
+                                log.error(f'下载文件: {filepath} [失败]')
+                                log.error('错误：FTP连接异常中断！！！')
+                                exit(-1)
+                        log.info(f'下载文件: {filepath} [成功]')
+                        # 解压
+                        if decompress:
+                            unzip(filepath)
+                        count += 1
+                        update_file_data(_cache_filename, filename)
+                        break
+            else:
+                return
         if count == 0:
             log.info(f'文件夹中未找到匹配文件：[{file_path}]')
         else:
@@ -363,3 +403,30 @@ class FTPCrawler:
                         rtkplot(pos_file, obs_file, nav_file, self.__replace_suffixes.get('obs_suffix'))
                         update_file_data(cache_filename, file)
                         log.info(f'[{cache_filename}]更新缓存文件名：[{file}]')
+
+    def crx2rnx(self) -> bool:
+        cache_filename = f'.cache/crx2rnx-{self.__host}'
+        if not os.path.exists(cache_filename):
+            with open(cache_filename, 'w'):
+                log.info(f'创建解析数据缓存文件：[{cache_filename}]')
+        file_lst = get_file_data(cache_filename)
+        for year, day in self.__datetime_list:
+            dirname = os.path.join(self.__save_dirname, str(year), f'{day:03}')
+            for filename in os.listdir(dirname):
+                if filename.endswith('.crx'):
+                    if filename in file_lst:
+                        log.info(f'[{cache_filename}]已存在缓存文件名：[{filename}]，跳过')
+                        continue
+                    filepath = os.path.join(dirname, filename)
+                    new_filepath = filepath.replace('.crx', f'.{str(year)[2:4]}d')
+                    if os.path.exists(new_filepath):
+                        os.remove(new_filepath)
+                    os.rename(filepath, new_filepath)
+                    command = f'{os.path.join(os.getcwd(), crx2rnx_path)} {new_filepath}'
+                    if (os.system(command)) == 0:
+                        update_file_data(cache_filename, filename)
+                        log.info(f'crx2rnx转换成功，[{cache_filename}]更新缓存文件名：[{filename}]')
+                    else:
+                        log.error(f'crx2rnx转换失败：[{filename}]')
+                        return False
+        return True
