@@ -10,7 +10,6 @@
 import ftplib
 import gzip
 import os
-import re
 from datetime import datetime, timedelta
 from typing import List
 
@@ -27,12 +26,15 @@ rtkplot_path = 'tools/rtkplot.exe'
 crx2rnx_path = 'tools/crx2rnx.exe'
 
 
-def unzip(filepath: str):
+def unzip(filepath: str, del_src: bool = True):
     if filepath.endswith('.gz'):
         with gzip.GzipFile(filepath, 'rb') as gz:
             with open(filepath.replace('.gz', ''), 'wb') as f:
                 f.write(gz.read())
             log.info(f'解压文件：{filepath} [成功]')
+        if del_src:
+            os.remove(filepath)
+            log.info(f'删除源文件：{filepath} [成功]')
 
 
 def open_application(app_name: str, backend: str = 'win32'):
@@ -285,10 +287,10 @@ class FTPCrawler:
             return True
         # log.info(f'文件列表: {files_list}')
         self.__make_download_dir(self.__save_dirname)
-        self.__download_files(cache_filename, file_path, files_list, decompress, download_date)
+        self.__download_files(cache_filename, dirname, file_path, files_list, decompress, download_date)
         return True
 
-    def __download_files(self, cache_filename: str, file_path: str, files_list: List[str], decompress: bool, download_date: str):
+    def __download_files(self, cache_filename: str, dirname: str, file_path: str, files_list: List[str], decompress: bool, download_date: str):
         # 下载文件夹中的文件
         count = 0
         for file in files_list:
@@ -330,13 +332,7 @@ class FTPCrawler:
                 file_lst = get_file_data(_cache_filename)
                 for suffix in self.__suffixes:
                     if filename.endswith(suffix) and filename not in file_lst:
-                        matches = re.findall(r'_(\d+)_', filename)
-                        if len(matches) > 0 and len(matches[0]) >= 7:
-                            year = matches[0][:4]
-                            day = matches[0][4:7]
-                        else:
-                            return
-                        new_dirname = os.path.join(self.__save_dirname, year, day)
+                        new_dirname = os.path.join(self.__save_dirname, dirname)
                         if not os.path.exists(new_dirname):
                             os.makedirs(new_dirname)
                         filepath = os.path.join(new_dirname, filename)
@@ -426,6 +422,8 @@ class FTPCrawler:
                     if (os.system(command)) == 0:
                         update_file_data(cache_filename, filename)
                         log.info(f'crx2rnx转换成功，[{cache_filename}]更新缓存文件名：[{filename}]')
+                        os.remove(new_filepath)
+                        log.info(f'删除源文件成功：[{new_filepath}]')
                     else:
                         log.error(f'crx2rnx转换失败：[{filename}]')
                         return False
